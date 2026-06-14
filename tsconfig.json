@@ -1,0 +1,39 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "ignoreDeprecations": "6.0",
+    "types": ["bun"],
+    "paths": {
+      "src/*": ["./src/*"],
+      "@klaude-code/builtin-tools/*": ["./packages/builtin-tools/src/*"],
+      "@klaude-code/builtin-tools": ["./packages/builtin-tools/src/index.ts"],
+      "@klaude-code/mcp-client/*": ["./packages/mcp-client/src/*"],
+      "@klaude-code/mcp-client": ["./packages/mcp-client/src/index.ts"],
+      "@klaude-code/agent-tools/*": ["./packages/agent-tools/src/*"],
+      "@klaude-code/agent-tools": ["./packages/agent-tools/src/index.ts"],
+      "@klaude-code/weixin/*": ["./packages/weixin/src/*"],
+      "@klaude-code/weixin": ["./packages/weixin/src/index.ts"],
+      "@klaude-code/workflow-engine/*": ["./packages/workflow-engine/src/*"],
+      "@klaude-code/workflow-engine": [
+        "./packages/workflow-engine/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "packages/remote-control-server/web"]
+}
