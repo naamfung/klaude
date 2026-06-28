@@ -24,24 +24,29 @@ function toolLog(msg: string): void {
 }
 
 const inputSchema = lazySchema(() =>
-  z.strictObject({
-    action: z
-      .enum(['get', 'update'])
-      .optional()
-      .describe(
-        'Action to perform: "get" to read status, "update" to mark complete or blocked. Defaults to "update" if status is provided, otherwise "get".',
-      ),
-    status: z
-      .enum(['complete', 'blocked'])
-      .optional()
-      .describe(
-        'Required for "update". Only "complete" or "blocked" are accepted.',
-      ),
-    reason: z
-      .string()
-      .optional()
-      .describe('Explanation for the status change. Required for "update".'),
-  }),
+  z
+    .strictObject({
+      action: z
+        .enum(['get', 'update'])
+        .optional()
+        .describe(
+          'Action to perform: "get" to read status, "update" to mark complete or blocked. Defaults to "update" if status is provided, otherwise "get".',
+        ),
+      status: z
+        .enum(['complete', 'blocked'])
+        .optional()
+        .describe(
+          'Required for "update". Only "complete" or "blocked" are accepted.',
+        ),
+      reason: z
+        .string()
+        .optional()
+        .describe('Explanation for blocked status. Optional for complete.'),
+    })
+    .refine(data => data.status !== 'blocked' || !!data.reason, {
+      message: 'Reason is required when status is "blocked".',
+      path: ['reason'],
+    }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
 
@@ -218,33 +223,43 @@ export const GoalTool = buildTool({
     }
 
     // status === 'blocked'
-    const reason = input.reason ?? 'unspecified blocker'
-    const result = recordBlockedAttempt(reason)
-    if (!result) {
-      return {
-        data: {
-          success: false,
-          error: 'Goal is not in a state that accepts blocked attempts.',
-        },
+    if (input.status === 'blocked') {
+      const reason = input.reason ?? 'unspecified blocker'
+      const result = recordBlockedAttempt(reason)
+      if (!result) {
+        return {
+          data: {
+            success: false,
+            error: 'Goal is not in a state that accepts blocked attempts.',
+          },
+        }
       }
-    }
-    persistCurrentGoal()
+      persistCurrentGoal()
 
-    if (result.status === 'blocked') {
+      if (result.status === 'blocked') {
+        return {
+          data: {
+            success: true,
+            goal: buildGoalSnapshot(),
+            message: `Goal marked as blocked after ${result.attempts} consecutive attempts. Reason: ${reason}`,
+          },
+        }
+      }
+
       return {
         data: {
           success: true,
           goal: buildGoalSnapshot(),
-          message: `Goal marked as blocked after ${result.attempts} consecutive attempts. Reason: ${reason}`,
+          message: `Blocked attempt ${result.attempts} recorded. The goal remains active — the same condition must persist for 3 consecutive turns before it is marked blocked.`,
         },
       }
-    }
+    } // end if (input.status === 'blocked')
 
+    // fallback for invalid status
     return {
       data: {
-        success: true,
-        goal: buildGoalSnapshot(),
-        message: `Blocked attempt ${result.attempts} recorded. The goal remains active — the same condition must persist for 3 consecutive turns before it is marked blocked.`,
+        success: false,
+        error: `Invalid status "${input.status}". Only "complete" or "blocked" are accepted.`,
       },
     }
   },
