@@ -149,8 +149,25 @@ export const GoalTool = buildTool({
   },
   async call(input: Input): Promise<{ data: Output }> {
     const action = input.action ?? (input.status ? 'update' : 'get')
+    if (
+      action === 'update' &&
+      input.status &&
+      input.reason !== undefined &&
+      typeof input.reason !== 'string'
+    ) {
+      return {
+        data: {
+          success: false,
+          error: `"reason" must be a string, got ${typeof input.reason}`,
+        },
+      }
+    }
+    const reasonStr =
+      input.reason && typeof input.reason === 'string'
+        ? input.reason.slice(0, 60)
+        : String(input.reason ?? '')
     toolLog(
-      `called: action=${action}${input.status ? ` status=${input.status}` : ''}${input.reason ? ` reason="${input.reason.slice(0, 60)}"` : ''}`,
+      `called: action=${action}${input.status ? ` status=${input.status}` : ''}${reasonStr ? ` reason="${reasonStr}"` : ''}`,
     )
     if (action === 'get') {
       const snapshot = buildGoalSnapshot()
