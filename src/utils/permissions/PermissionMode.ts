@@ -44,14 +44,14 @@ const PERMISSION_MODE_CONFIG: Partial<
   default: {
     title: 'Default',
     shortTitle: 'Default',
-    symbol: '',
+    symbol: '●',
     color: 'text',
     external: 'default',
   },
   plan: {
     title: 'Plan Mode',
     shortTitle: 'Plan',
-    symbol: PAUSE_ICON,
+    symbol: '⏵⏵',
     color: 'planMode',
     external: 'plan',
   },

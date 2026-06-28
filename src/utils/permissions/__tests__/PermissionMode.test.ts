@@ -96,8 +96,8 @@ describe('permissionModeShortTitle', () => {
 // ─── permissionModeSymbol ──────────────────────────────────────────────
 
 describe('permissionModeSymbol', () => {
-  test('returns empty string for default', () => {
-    expect(permissionModeSymbol('default')).toBe('')
+  test('returns bullet for default', () => {
+    expect(permissionModeSymbol('default')).toBe('●')
   })
 
   test('returns non-empty for non-default modes', () => {
