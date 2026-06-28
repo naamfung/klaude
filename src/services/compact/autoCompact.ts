@@ -59,7 +59,6 @@ export type AutoCompactTrackingState = {
   consecutiveFailures?: number
 }
 
-export const AUTOCOMPACT_BUFFER_TOKENS = 13_000
 export const WARNING_THRESHOLD_BUFFER_TOKENS = 20_000
 export const ERROR_THRESHOLD_BUFFER_TOKENS = 20_000
 export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
@@ -70,15 +69,17 @@ export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 const TOOL_RESULT_GROWTH_ESTIMATE = 15_000
 
 /**
- * Context-aware autocompact buffer. Larger context windows need more
- * headroom because a single turn can produce proportionally more tokens
- * (longer model outputs + larger tool results).
+ * Context-aware autocompact buffer. Dynamically calculates buffer based on
+ * the model's effective context window size, using a 7% ratio to ensure
+ * proportional headroom for larger windows while protecting small windows
+ * with a 10k minimum floor.
  */
 export function getAutocompactBufferTokens(model: string): number {
   const effectiveWindow = getEffectiveContextWindowSize(model)
-  if (effectiveWindow >= 800_000) return 50_000
-  if (effectiveWindow >= 400_000) return 30_000
-  return AUTOCOMPACT_BUFFER_TOKENS
+  // Dynamic buffer: 7% of effective window size
+  const dynamicBuffer = Math.floor(effectiveWindow * 0.07)
+  // Ensure minimum buffer to protect small context window models
+  return Math.max(dynamicBuffer, 10_000)
 }
 
 /**
