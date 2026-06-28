@@ -90,7 +90,11 @@ export function estimateMaxTurnGrowth(model: string): number {
     getMaxOutputTokensForModel(model),
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   )
-  return maxOutput + TOOL_RESULT_GROWTH_ESTIMATE
+  // Estimate system prompt + tools schema growth
+  const SYSTEM_AND_TOOLS_GROWTH_ESTIMATE = 5_000
+  return (
+    maxOutput + TOOL_RESULT_GROWTH_ESTIMATE + SYSTEM_AND_TOOLS_GROWTH_ESTIMATE
+  )
 }
 
 // Stop trying autocompact after this many consecutive failures.
@@ -100,9 +104,12 @@ const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 
 export function getAutoCompactThreshold(model: string): number {
   const effectiveContextWindow = getEffectiveContextWindowSize(model)
+  const rawContextWindow = getContextWindowForModel(model, getSdkBetas())
 
-  const autocompactThreshold =
-    effectiveContextWindow - getAutocompactBufferTokens(model)
+  // Use a more conservative threshold based on raw context window size
+  // to avoid exceeding API limits. The effective window already subtracts
+  // reserved tokens, but we need extra headroom for system prompt, tools, etc.
+  const maxSafeThreshold = Math.floor(rawContextWindow * 0.55)
 
   // Override for easier testing of autocompact
   const envPercent = process.env.KLAUDE_AUTOCOMPACT_PCT_OVERRIDE
@@ -112,11 +119,14 @@ export function getAutoCompactThreshold(model: string): number {
       const percentageThreshold = Math.floor(
         effectiveContextWindow * (parsed / 100),
       )
-      return Math.min(percentageThreshold, autocompactThreshold)
+      return Math.min(percentageThreshold, maxSafeThreshold)
     }
   }
 
-  return autocompactThreshold
+  return Math.min(
+    maxSafeThreshold,
+    effectiveContextWindow - getAutocompactBufferTokens(model),
+  )
 }
 
 export function calculateTokenWarningState(
@@ -149,8 +159,8 @@ export function calculateTokenWarningState(
     isAutoCompactEnabled() && tokenUsage >= autoCompactThreshold
 
   const actualContextWindow = getEffectiveContextWindowSize(model)
-  const defaultBlockingLimit =
-    actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
+  const rawContextWindow = getContextWindowForModel(model, getSdkBetas())
+  const defaultBlockingLimit = rawContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
 
   // Allow override for testing
   const blockingLimitOverride = process.env.KLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE
