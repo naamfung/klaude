@@ -28,7 +28,9 @@ export const inputSchema = lazySchema(() =>
       ),
     params: z
       .record(z.string(), z.unknown())
-      .describe('The parameters to pass to the target tool'),
+      .describe(
+        'The parameters to pass to the target tool. Must match the target tool\'s input schema exactly (e.g., {"status": "complete"}, not {"status": {"type": "complete"}}). Only primitive values and arrays of primitives are allowed unless the target tool\'s schema explicitly allows objects.',
+      ),
   }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
@@ -42,6 +44,35 @@ export const outputSchema = lazySchema(() =>
 type OutputSchema = ReturnType<typeof outputSchema>
 
 export type Output = z.infer<OutputSchema>
+
+function validateParams(params: Record<string, unknown>): string | null {
+  for (const key of Object.keys(params)) {
+    const value = params[key]
+    const type = typeof value
+    if (
+      type !== 'string' &&
+      type !== 'number' &&
+      type !== 'boolean' &&
+      type !== 'bigint' &&
+      type !== 'symbol' &&
+      type !== 'undefined' &&
+      value !== null
+    ) {
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+          const nestedErr = validateParams({ [`[${i}]`]: value[i] } as Record<
+            string,
+            unknown
+          >)
+          if (nestedErr) return nestedErr
+        }
+      } else {
+        return `Parameter "${key}" contains a nested object. Only primitive values (string, number, boolean, null) and arrays of primitives are allowed. Received object of type "${type}".`
+      }
+    }
+  }
+  return null
+}
 
 export const ExecuteTool = buildTool({
   name: EXECUTE_TOOL_NAME,
@@ -75,6 +106,77 @@ export const ExecuteTool = buildTool({
         newMessages: [
           createUserMessage({
             content: `Tool "${input.tool_name}" not found. Use SearchExtraTools to discover available tools.`,
+          }),
+        ],
+      }
+    }
+
+    // Validate input using targetTool's inputSchema if available — provides specific, model-friendly error messages
+    if (targetTool.inputSchema) {
+      try {
+        const schema = targetTool.inputSchema as any
+        const parseResult =
+          schema.safeParse?.(input.params) || schema.safeParse(input.params)
+        if (parseResult && !parseResult.success) {
+          // Convert zod validation errors to model-friendly messages
+          const errorMessages = parseResult.error.issues.map((issue: any) => {
+            const path = issue.path?.length ? issue.path.join('.') : 'root'
+            // For type/enum errors, make them more explicit for the model
+            if (issue.code === 'invalid_enum_value') {
+              const expected = issue.options
+                ?.map((o: any) => `"${o}"`)
+                .join(' or ')
+              const received =
+                issue.received === 'undefined'
+                  ? 'undefined (missing field)'
+                  : typeof issue.received === 'object'
+                    ? 'an object (e.g., {"type": "..."}). Did you confuse the JSON schema description with the actual value?'
+                    : JSON.stringify(issue.received)
+              return `Field '${path}': Invalid enum value. Expected ${expected}, but received ${received}.`
+            }
+            if (issue.code === 'invalid_type') {
+              const expected = issue.expected
+              const received =
+                typeof issue.received === 'object'
+                  ? 'an object. Did you confuse the JSON schema description (e.g., {"status": {"type": "complete"}}) with the actual value (e.g., {"status": "complete"})?'
+                  : typeof issue.received
+              return `Field '${path}': Expected type ${expected}, but received ${received}.`
+            }
+            return `Field '${path}': ${issue.message}`
+          })
+
+          return {
+            data: {
+              result: null,
+              tool_name: input.tool_name,
+            },
+            newMessages: [
+              createUserMessage({
+                content: `Invalid parameters for tool "${input.tool_name}": ${errorMessages.join(
+                  '; ',
+                )}. Please ensure parameters match the tool's expected schema exactly (e.g., {"status": "complete"}, not {"status": {"type": "complete"}}).`,
+              }),
+            ],
+          }
+        }
+      } catch (err) {
+        // If schema validation fails unexpectedly, fall back to validateParams or targetTool.validateInput
+        // eslint-disable-next-line no-console
+        console.error('ExecuteTool schema validation error:', err)
+      }
+    }
+
+    // Fallback validateParams for cases where targetTool.inputSchema is not available or passed
+    const paramError = validateParams(input.params)
+    if (paramError) {
+      return {
+        data: {
+          result: null,
+          tool_name: input.tool_name,
+        },
+        newMessages: [
+          createUserMessage({
+            content: `Parameter validation failed: ${paramError}. Ensure all params are primitive values (strings, numbers, booleans, null) or arrays of primitives.`,
           }),
         ],
       }
