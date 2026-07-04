@@ -110,7 +110,7 @@ export function getAutoCompactThreshold(model: string): number {
   // Use a more conservative threshold based on raw context window size
   // to avoid exceeding API limits. The effective window already subtracts
   // reserved tokens, but we need extra headroom for system prompt, tools, etc.
-  const maxSafeThreshold = Math.floor(rawContextWindow * 0.55)
+  const maxSafeThreshold = Math.floor(rawContextWindow * 0.8)
 
   // Override for easier testing of autocompact
   const envPercent = process.env.KLAUDE_AUTOCOMPACT_PCT_OVERRIDE
