@@ -59,22 +59,34 @@ export function stripIdeContextTags(text: string): string {
  * Anthropic `thinking` blocks). When that happens the raw thinking leaks into
  * background-summary text shown to the user.
  *
- * Two variants are matched:
+ * Three variants are matched:
  *   1. Closed: `<think>…</think>` / `<thinking>…</thinking>`
  *   2. Trailing-unclosed: `<think>…` / `<thinking>…` (streaming interruption,
  *      truncated response, or context-shift corruption that drops the closing
  *      tag). Matched non-greedily to the end of string.
+ *   3. Leading-orphan-close: `…</think>` / `…</thinking>` where the opening
+ *      tag is missing (the opening tag was dropped by context-shift truncation
+ *      or never emitted). Everything from the start of the text up to and
+ *      including the orphan closing tag is treated as thinking content and
+ *      stripped; only the content after the closing tag is kept.
+ *
+ * The orphan-close variant uses negative lookbehind/lookahead for backticks
+ * so that `` `</think>` `` (the tag mentioned as a literal string inside
+ * markdown inline code) is NOT treated as the actual closing tag. This is
+ * critical when the thinking content discusses `</think>` tags themselves.
  */
 const THINKING_TAG_PATTERN =
   /<think(?:ing)?(?:\s[^>]*)?>[\s\S]*?<\/think(?:ing)?>\n?/gi
 const THINKING_TAG_UNCLOSED_PATTERN = /<think(?:ing)?(?:\s[^>]*)?>[\s\S]*$/gi
+const THINKING_TAG_ORPHAN_CLOSE_PATTERN =
+  /^[\s\S]*?(?<!`)<\/think(?:ing)?>(?!`)\n?/gi
 
 /**
- * Strip model-emitted `<think>` / `<thinking>` chain-of-thought tags (both
- * closed and trailing-unclosed variants) from text before it is surfaced to
- * the user. Used by background silent requests (away summary, agent summary,
- * prompt suggestion) whose responses from third-party thinking models may
- * contain inline reasoning that must not be displayed.
+ * Strip model-emitted `<think>` / `<thinking>` chain-of-thought tags (closed,
+ * trailing-unclosed, and leading-orphan-close variants) from text before it
+ * is surfaced to the user. Used by background silent requests (away summary,
+ * agent summary, prompt suggestion) whose responses from third-party thinking
+ * models may contain inline reasoning that must not be displayed.
  *
  * Returns the cleaned text trimmed. If stripping removes everything, the
  * original text is returned unchanged (better to show something than nothing).
@@ -83,6 +95,7 @@ export function stripThinkingTags(text: string): string {
   const result = text
     .replace(THINKING_TAG_PATTERN, '')
     .replace(THINKING_TAG_UNCLOSED_PATTERN, '')
+    .replace(THINKING_TAG_ORPHAN_CLOSE_PATTERN, '')
     .trim()
   return result || text
 }

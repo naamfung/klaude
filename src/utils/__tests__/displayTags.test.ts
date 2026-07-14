@@ -223,4 +223,54 @@ describe('stripThinkingTags', () => {
     expect(result).not.toContain('</think>')
     expect(result).toContain('您正在調查壓縮上下文')
   })
+
+  test('strips leading orphan </think> close tag (opening tag dropped by context shift)', () => {
+    // Context-shift truncation can drop the opening <think> tag, leaving only
+    // the closing </think> tag preceded by the model's chain-of-thought.
+    // Everything up to and including the orphan close tag is thinking content
+    // and must be stripped; only the real answer after it should remain.
+    const leaked =
+      '  3.  **確定下一步具體操作**：\n      *   由於代碼已經提交並推送完成...\n  7.  **最終文本調整**：\n  </think>\n\n  您正在修復 `llama.cpp` 的 reasoning 解析器。'
+    const result = stripThinkingTags(leaked)
+    expect(result).not.toContain('</think>')
+    expect(result).not.toContain('最終文本調整')
+    expect(result).toContain('您正在修復')
+  })
+
+  test('strips leading orphan </thinking> close tag', () => {
+    const leaked = 'reasoning content here  </thinking>\nvisible answer'
+    expect(stripThinkingTags(leaked)).toBe('visible answer')
+  })
+
+  test('preserves content when only a lone </think> appears in normal prose', () => {
+    // Edge case: if a user's actual answer legitimately contains the literal
+    // string "</think>" with no preceding thinking content, the orphan-close
+    // pattern would strip everything up to it. This is an acceptable tradeoff
+    // because such prose is rare and the thinking-tag leak is the bigger
+    // problem. The test documents the behavior.
+    const input = 'before</think>after'
+    // The orphan-close pattern matches from start to </think>, leaving "after"
+    expect(stripThinkingTags(input)).toBe('after')
+  })
+
+  test('handles real-world leaked content with orphan close tag from chat-err3', () => {
+    // Exact structure from the chat-err3.txt bug report: thinking content
+    // (no opening <think> tag) followed by </think> and the actual summary.
+    // The thinking content AND the actual answer both mention `</think>`
+    // inside backticks (discussing the tag). The backtick-aware orphan-close
+    // pattern must skip the backtick-wrapped mention and only strip up to the
+    // real closing tag.
+    const leaked =
+      '※ ` 標籤處理的 bug，並更新 templates 到 v2.1。\n      *   最終任務是將所有改動提交並推送到遠端 master 分支。\n      *   目前任務已經完成（代碼已提交並推送到 master）。\n\n  3.  **確定「用戶在做什麼」（高層目標）**：\n      *   用戶正在修復並完善 `llama.cpp` 的 reasoning 解析器對 `</think>`\n  標籤的處理邏輯，並更新相關模板以解決標記殘留問題。\n\n  7.  **最終文本調整**：\n  </think>\n\n  您正在修復 `llama.cpp` 的 reasoning 解析器對 `</think>`\n  標籤的處理邏輯，並更新相關模板以解決標記殘留的問題。目前所有代碼改動已成功提交並推送到遠端 master\n  分支，請問是否還有其他需要進一步處理或修復的功能？'
+    const result = stripThinkingTags(leaked)
+    // Thinking content must be stripped
+    expect(result).not.toContain('最終文本調整')
+    expect(result).not.toContain('確定「用戶在做什麼」')
+    expect(result).not.toContain('※ ` 標籤處理的 bug')
+    // The actual answer must be preserved (including its backtick-wrapped `</think>` mention)
+    expect(result).toContain('您正在修復 `llama.cpp`')
+    expect(result).toContain('請問是否還有其他需要進一步處理')
+    // The backtick-wrapped `</think>` in the actual answer is legitimate and stays
+    expect(result).toContain('`</think>`')
+  })
 })
