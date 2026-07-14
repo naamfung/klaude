@@ -99,3 +99,78 @@ export function stripThinkingTags(text: string): string {
     .trim()
   return result || text
 }
+
+export type ThinkSegment = {
+  type: 'thinking' | 'text'
+  content: string
+}
+
+const THINK_TAG_BOUNDARY_PATTERN =
+  /(?<!`)(<think(?:ing)?(?:\s[^>]*)?>|<\/think(?:ing)?>)(?!`)/gi
+
+/**
+ * Split text that contains model-emitted `<think>` / `<thinking>` tags into
+ * a sequence of thinking and text segments. Unlike `stripThinkingTags` (which
+ * discards thinking content), this function PRESERVES the thinking content as
+ * separate segments so it can be routed into Anthropic `thinking` content
+ * blocks and rendered with the proper grey/collapsible "∴ Thinking" UI.
+ *
+ * Handles all variants:
+ *   - Closed: `<think>…</think>`
+ *   - Orphan close: `…</think>` (opening tag dropped by context shift)
+ *   - Unclosed: `<think>…` (closing tag dropped)
+ *   - Multiple blocks in one text
+ *
+ * Backtick-wrapped mentions like `` `</think>` `` are NOT treated as tag
+ * boundaries (the tag is being discussed as a literal string, not emitted
+ * as a thinking marker).
+ *
+ * Used by the OpenAI-compatible API path to post-process text blocks whose
+ * content was emitted inline by local LLM servers (llama.cpp + Qwen-Agentic
+ * / DeepSeek chat templates) that don't separate thinking into a
+ * `reasoning_content` field.
+ */
+export function splitTextByThinkTags(text: string): ThinkSegment[] {
+  const segments: ThinkSegment[] = []
+
+  let lastIndex = 0
+  let inThink = false
+  THINK_TAG_BOUNDARY_PATTERN.lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = THINK_TAG_BOUNDARY_PATTERN.exec(text)) !== null) {
+    const tag = match[0]
+    const tagStart = match.index
+    const tagEnd = tagStart + tag.length
+
+    const content = text.slice(lastIndex, tagStart)
+
+    if (tag.startsWith('</')) {
+      // Closing tag — content before it is thinking, regardless of whether
+      // we saw an opening tag (orphan close case).
+      if (content.trim()) {
+        segments.push({ type: 'thinking', content: content.trim() })
+      }
+      inThink = false
+    } else {
+      // Opening tag — content before it is text.
+      if (content.trim()) {
+        segments.push({ type: 'text', content: content.trim() })
+      }
+      inThink = true
+    }
+
+    lastIndex = tagEnd
+  }
+
+  // Remaining content after the last tag
+  const remaining = text.slice(lastIndex)
+  if (remaining.trim()) {
+    segments.push({
+      type: inThink ? 'thinking' : 'text',
+      content: remaining.trim(),
+    })
+  }
+
+  return segments.length > 0 ? segments : [{ type: 'text', content: text }]
+}

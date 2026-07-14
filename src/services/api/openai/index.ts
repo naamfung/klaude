@@ -62,6 +62,7 @@ import {
   createUserMessage,
   normalizeContentFromAPI,
 } from '../../../utils/messages.js'
+import { splitTextByThinkTags } from '../../../utils/displayTags.js'
 import type { SDKAssistantMessageError } from '../../../entrypoints/agentSdkTypes.js'
 import {
   isSearchExtraToolsEnabled,
@@ -165,10 +166,46 @@ function assembleFinalAssistantOutputs(params: {
   } = params
   const outputs: (AssistantMessage | SystemAPIErrorMessage)[] = []
 
-  const allBlocks = Object.keys(contentBlocks)
+  const rawBlocks = Object.keys(contentBlocks)
     .sort((a, b) => Number(a) - Number(b))
     .map(k => contentBlocks[Number(k)])
     .filter(Boolean)
+
+  // Post-process text blocks to extract inline <think>/<thinking> tags.
+  // Some local LLM servers (llama.cpp with Qwen-Agentic / DeepSeek chat
+  // templates) emit chain-of-thought inline in delta.content rather than via
+  // a separate reasoning_content field. The stream adapter routes
+  // reasoning_content to proper thinking blocks, but inline <think> tags end
+  // up in text blocks as raw text. This splits them so thinking content is
+  // rendered with the proper grey/collapsible "∴ Thinking" UI instead of
+  // leaking raw </think> tags to the user.
+  const allBlocks: Record<string, unknown>[] = []
+  for (const block of rawBlocks) {
+    if (
+      block &&
+      typeof block === 'object' &&
+      (block as Record<string, unknown>).type === 'text' &&
+      typeof (block as Record<string, unknown>).text === 'string'
+    ) {
+      const text = (block as Record<string, unknown>).text as string
+      if (/<\/?think(?:ing)?(?:\s[^>]*)?>/i.test(text)) {
+        const segments = splitTextByThinkTags(text)
+        for (const seg of segments) {
+          if (seg.type === 'thinking') {
+            allBlocks.push({
+              type: 'thinking',
+              thinking: seg.content,
+              signature: '',
+            })
+          } else {
+            allBlocks.push({ type: 'text', text: seg.content })
+          }
+        }
+        continue
+      }
+    }
+    allBlocks.push(block)
+  }
 
   if (allBlocks.length > 0 && partialMessage) {
     outputs.push({

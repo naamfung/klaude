@@ -4,6 +4,7 @@ import {
   stripDisplayTagsAllowEmpty,
   stripIdeContextTags,
   stripThinkingTags,
+  splitTextByThinkTags,
 } from '../displayTags'
 
 describe('stripDisplayTags', () => {
@@ -272,5 +273,134 @@ describe('stripThinkingTags', () => {
     expect(result).toContain('請問是否還有其他需要進一步處理')
     // The backtick-wrapped `</think>` in the actual answer is legitimate and stays
     expect(result).toContain('`</think>`')
+  })
+})
+
+describe('splitTextByThinkTags', () => {
+  test('splits closed <think>...</think> into thinking + text segments', () => {
+    const result = splitTextByThinkTags(
+      '<think>reasoning here</think>actual response',
+    )
+    expect(result).toEqual([
+      { type: 'thinking', content: 'reasoning here' },
+      { type: 'text', content: 'actual response' },
+    ])
+  })
+
+  test('splits orphan </think> (no opening tag) into thinking + text', () => {
+    // This is the chat.txt case: opening <think> was dropped by context shift
+    const result = splitTextByThinkTags(
+      'reasoning that was emitted without opening tag</think>actual response',
+    )
+    expect(result).toEqual([
+      {
+        type: 'thinking',
+        content: 'reasoning that was emitted without opening tag',
+      },
+      { type: 'text', content: 'actual response' },
+    ])
+  })
+
+  test('splits unclosed <think> (no closing tag) into text + thinking', () => {
+    const result = splitTextByThinkTags(
+      'text before<think>reasoning without close',
+    )
+    expect(result).toEqual([
+      { type: 'text', content: 'text before' },
+      { type: 'thinking', content: 'reasoning without close' },
+    ])
+  })
+
+  test('handles text with no think tags (returns single text segment)', () => {
+    const result = splitTextByThinkTags('just regular text')
+    expect(result).toEqual([{ type: 'text', content: 'just regular text' }])
+  })
+
+  test('handles multiple think blocks', () => {
+    const result = splitTextByThinkTags(
+      'text1<think>r1</think>mid<think>r2</think>text2',
+    )
+    expect(result).toEqual([
+      { type: 'text', content: 'text1' },
+      { type: 'thinking', content: 'r1' },
+      { type: 'text', content: 'mid' },
+      { type: 'thinking', content: 'r2' },
+      { type: 'text', content: 'text2' },
+    ])
+  })
+
+  test('handles <thinking> variant (not just <think>)', () => {
+    const result = splitTextByThinkTags(
+      '<thinking>my thoughts</thinking>answer',
+    )
+    expect(result).toEqual([
+      { type: 'thinking', content: 'my thoughts' },
+      { type: 'text', content: 'answer' },
+    ])
+  })
+
+  test('handles think tags with attributes', () => {
+    const result = splitTextByThinkTags(
+      '<think type="reasoning">thoughts</think>response',
+    )
+    expect(result).toEqual([
+      { type: 'thinking', content: 'thoughts' },
+      { type: 'text', content: 'response' },
+    ])
+  })
+
+  test('handles case-insensitive tags', () => {
+    const result = splitTextByThinkTags('<THINK>thoughts</THINK>response')
+    expect(result).toEqual([
+      { type: 'thinking', content: 'thoughts' },
+      { type: 'text', content: 'response' },
+    ])
+  })
+
+  test('preserves backtick-wrapped </think> as literal text, not tag', () => {
+    // When thinking content discusses `</think>` as a literal string inside
+    // markdown inline code, it should NOT be treated as a tag boundary.
+    const result = splitTextByThinkTags('discussing `</think>` in prose')
+    expect(result).toEqual([
+      { type: 'text', content: 'discussing `</think>` in prose' },
+    ])
+  })
+
+  test('handles multi-line think content', () => {
+    const result = splitTextByThinkTags(
+      '<think>\nline1\nline2\n</think>\nresponse',
+    )
+    expect(result).toEqual([
+      { type: 'thinking', content: 'line1\nline2' },
+      { type: 'text', content: 'response' },
+    ])
+  })
+
+  test('handles real-world chat.txt scenario (orphan close with multi-line thinking)', () => {
+    const leaked =
+      '  目前處於 master 分支，狀態是 clean。\n\n  我需要執行 `git push origin master`。\n\n  讓我先執行 `git push origin master` 看看結果。\n  </think>\n\n  我將幫您將 master 分支推送到遠端倉庫。讓我先執行 `git push origin master` 命令：'
+    const result = splitTextByThinkTags(leaked)
+    expect(result.length).toBe(2)
+    expect(result[0].type).toBe('thinking')
+    expect(result[0].content).toContain('目前處於 master 分支')
+    expect(result[0].content).not.toContain('</think>')
+    expect(result[1].type).toBe('text')
+    expect(result[1].content).toContain('我將幫您將 master 分支推送')
+    expect(result[1].content).not.toContain('</think>')
+  })
+
+  test('handles empty string input', () => {
+    const result = splitTextByThinkTags('')
+    expect(result).toEqual([{ type: 'text', content: '' }])
+  })
+
+  test('strips leading/trailing whitespace from segments', () => {
+    const result = splitTextByThinkTags(
+      '  <think>  reasoning  </think>  response  ',
+    )
+    expect(result).toEqual([
+      { type: 'thinking', content: 'reasoning' },
+      { type: 'text', content: 'response' },
+    ])
   })
 })
