@@ -2,6 +2,7 @@ import { APIUserAbortError } from '@anthropic-ai/sdk'
 import { getEmptyToolPermissionContext } from '../Tool.js'
 import type { Message } from '../types/message.js'
 import { logForDebugging } from '../utils/debug.js'
+import { stripThinkingTags } from '../utils/displayTags.js'
 import {
   createUserMessage,
   getAssistantMessageText,
@@ -87,7 +88,13 @@ export async function generateAwaySummary(
       return null
     }
     endTrace(langfuseTrace)
-    return getAssistantMessageText(response)
+    // Strip inline <think>/<thinking> chain-of-thought tags that some
+    // third-party thinking models emit directly in the text content (rather
+    // than via a separate reasoning_content field). Without this, the model's
+    // internal reasoning leaks into the "while you were away" card shown to
+    // the user.
+    const rawText = getAssistantMessageText(response)
+    return rawText === null ? null : stripThinkingTags(rawText)
   } catch (err) {
     if (err instanceof APIUserAbortError || signal.aborted) {
       return null

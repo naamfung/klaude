@@ -49,3 +49,40 @@ const IDE_CONTEXT_TAGS_PATTERN =
 export function stripIdeContextTags(text: string): string {
   return text.replace(IDE_CONTEXT_TAGS_PATTERN, '').trim()
 }
+
+/**
+ * Pattern for model-emitted thinking tags. Some third-party models and local
+ * LLM servers (llama.cpp with Qwen-Agentic / DeepSeek chat templates) emit
+ * chain-of-thought inline as `<think>…</think>` or `<thinking>…</thinking>`
+ * directly inside the text content (rather than via a separate
+ * `reasoning_content` field that the OpenAI stream adapter routes into
+ * Anthropic `thinking` blocks). When that happens the raw thinking leaks into
+ * background-summary text shown to the user.
+ *
+ * Two variants are matched:
+ *   1. Closed: `<think>…</think>` / `<thinking>…</thinking>`
+ *   2. Trailing-unclosed: `<think>…` / `<thinking>…` (streaming interruption,
+ *      truncated response, or context-shift corruption that drops the closing
+ *      tag). Matched non-greedily to the end of string.
+ */
+const THINKING_TAG_PATTERN =
+  /<think(?:ing)?(?:\s[^>]*)?>[\s\S]*?<\/think(?:ing)?>\n?/gi
+const THINKING_TAG_UNCLOSED_PATTERN = /<think(?:ing)?(?:\s[^>]*)?>[\s\S]*$/gi
+
+/**
+ * Strip model-emitted `<think>` / `<thinking>` chain-of-thought tags (both
+ * closed and trailing-unclosed variants) from text before it is surfaced to
+ * the user. Used by background silent requests (away summary, agent summary,
+ * prompt suggestion) whose responses from third-party thinking models may
+ * contain inline reasoning that must not be displayed.
+ *
+ * Returns the cleaned text trimmed. If stripping removes everything, the
+ * original text is returned unchanged (better to show something than nothing).
+ */
+export function stripThinkingTags(text: string): string {
+  const result = text
+    .replace(THINKING_TAG_PATTERN, '')
+    .replace(THINKING_TAG_UNCLOSED_PATTERN, '')
+    .trim()
+  return result || text
+}

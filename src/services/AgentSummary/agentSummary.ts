@@ -15,6 +15,7 @@ import { isPoorModeActive } from '../../commands/poor/poorMode.js'
 import { updateAgentSummary } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import type { AgentId } from '../../types/ids.js'
 import { logForDebugging } from '../../utils/debug.js'
+import { stripThinkingTags } from '../../utils/displayTags.js'
 import {
   type CacheSafeParams,
   runForkedAgent,
@@ -164,7 +165,10 @@ export function startAgentSummarization(
           : []
         const textBlock = contentArr.find(b => b.type === 'text')
         if (textBlock?.type === 'text' && textBlock.text.trim()) {
-          const summaryText = textBlock.text.trim()
+          // Strip inline <think>/<thinking> chain-of-thought tags emitted by
+          // some third-party thinking models directly in the text content.
+          const summaryText = stripThinkingTags(textBlock.text).trim()
+          if (!summaryText) continue
           logForDebuggingImpl(
             `[AgentSummary] Summary result for ${taskId}: ${summaryText}`,
           )

@@ -5,6 +5,7 @@ import { isAgentSwarmsEnabled } from '../../utils/agentSwarmsEnabled.js'
 import { count } from '../../utils/array.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from '../../utils/envUtils.js'
 import { toError } from '../../utils/errors.js'
+import { stripThinkingTags } from '../../utils/displayTags.js'
 import {
   type CacheSafeParams,
   createCacheSafeParams,
@@ -346,7 +347,9 @@ export async function generateSuggestion(
       : []
     const textBlock = contentArr.find(b => b.type === 'text')
     if (textBlock?.type === 'text' && typeof textBlock.text === 'string') {
-      const suggestion = textBlock.text.trim()
+      // Strip inline <think>/<thinking> chain-of-thought tags emitted by
+      // some third-party thinking models directly in the text content.
+      const suggestion = stripThinkingTags(textBlock.text).trim()
       if (suggestion) {
         return { suggestion, generationRequestId }
       }
