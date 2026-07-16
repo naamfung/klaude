@@ -1,5 +1,6 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
+import { getSdkBetas } from '../bootstrap/state.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
@@ -9,6 +10,38 @@ import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../constants/contextLimits.js'
 
 // Maximum output tokens for compact operations
 export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
+
+// Hard floor: 10% of total context capacity, ensuring enough room for a
+// meaningful summary even when the autocompact trigger threshold is high.
+const COMPACT_MAX_OUTPUT_TOKENS_FLOOR_RATIO = 0.1
+
+/**
+ * Calculate the max output tokens for the compact request, based on the
+ * model's total context capacity and the autocompact trigger threshold.
+ *
+ * Formula: MaxTokens = totalCapacity - triggerThreshold
+ * This gives the remaining headroom when compaction triggers (e.g., if
+ * the threshold is 80% of 128K, MaxTokens = 128K - 102.4K = 25.6K).
+ *
+ * Hard floor: 10% of total capacity.
+ *
+ * Falls back to COMPACT_MAX_OUTPUT_TOKENS when autoCompactThreshold is
+ * not provided (e.g., manual /compact without threshold info).
+ */
+export function getCompactMaxOutputTokens(
+  model: string,
+  autoCompactThreshold?: number,
+): number {
+  if (autoCompactThreshold === undefined) {
+    return COMPACT_MAX_OUTPUT_TOKENS
+  }
+  const rawContextWindow = getContextWindowForModel(model, getSdkBetas())
+  const dynamic = Math.max(0, rawContextWindow - autoCompactThreshold)
+  const floor = Math.floor(
+    rawContextWindow * COMPACT_MAX_OUTPUT_TOKENS_FLOOR_RATIO,
+  )
+  return Math.max(dynamic, floor)
+}
 
 // Default max output tokens
 const MAX_OUTPUT_TOKENS_DEFAULT = 32_000

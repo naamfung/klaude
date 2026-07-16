@@ -42,7 +42,7 @@ import {
   type Attachment,
 } from '../../utils/attachments.js'
 import { getMemoryPath } from '../../utils/config.js'
-import { COMPACT_MAX_OUTPUT_TOKENS } from '../../utils/context.js'
+import { getCompactMaxOutputTokens } from '../../utils/context.js'
 import {
   analyzeContext,
   tokenStatsToStatsigMetrics,
@@ -479,6 +479,7 @@ export async function compactConversation(
         context,
         preCompactTokenCount,
         cacheSafeParams: retryCacheSafeParams,
+        autoCompactThreshold: recompactionInfo?.autoCompactThreshold,
       })
       summary = getAssistantMessageText(summaryResponse)
       if (!summary?.startsWith(PROMPT_TOO_LONG_ERROR_MESSAGE)) break
@@ -1174,6 +1175,7 @@ async function streamCompactSummary({
   context,
   preCompactTokenCount,
   cacheSafeParams,
+  autoCompactThreshold,
 }: {
   messages: Message[]
   summaryRequest: UserMessage
@@ -1181,6 +1183,7 @@ async function streamCompactSummary({
   context: ToolUseContext
   preCompactTokenCount: number
   cacheSafeParams: CacheSafeParams
+  autoCompactThreshold?: number
 }): Promise<AssistantMessage> {
   // When prompt cache sharing is enabled, use forked agent to reuse the
   // main conversation's cached prefix (system prompt, tools, context messages).
@@ -1349,7 +1352,10 @@ async function streamCompactSummary({
           isNonInteractiveSession: context.options.isNonInteractiveSession,
           hasAppendSystemPrompt: !!context.options.appendSystemPrompt,
           maxOutputTokensOverride: Math.min(
-            COMPACT_MAX_OUTPUT_TOKENS,
+            getCompactMaxOutputTokens(
+              context.options.mainLoopModel,
+              autoCompactThreshold,
+            ),
             getMaxOutputTokensForModel(context.options.mainLoopModel),
           ),
           querySource: 'compact',
