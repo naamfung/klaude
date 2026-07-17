@@ -174,3 +174,43 @@ export function splitTextByThinkTags(text: string): ThinkSegment[] {
 
   return segments.length > 0 ? segments : [{ type: 'text', content: text }]
 }
+
+/**
+ * Post-process content blocks to split inline `<think>`/`<thinking>` tags
+ * from text blocks into proper thinking + text blocks.
+ *
+ * Used by API paths (streaming and non-streaming) to handle local LLM
+ * servers (llama.cpp with Qwen-Agentic / DeepSeek chat templates) that
+ * emit chain-of-thought inline in text content rather than via a separate
+ * thinking block. Blocks without think tags are passed through unchanged.
+ */
+export function splitThinkTagsInContentBlocks(blocks: unknown[]): unknown[] {
+  const result: unknown[] = []
+  for (const block of blocks) {
+    if (
+      block &&
+      typeof block === 'object' &&
+      (block as Record<string, unknown>).type === 'text' &&
+      typeof (block as Record<string, unknown>).text === 'string'
+    ) {
+      const text = (block as Record<string, unknown>).text as string
+      if (/<\/?think(?:ing)?(?:\s[^>]*)?>/i.test(text)) {
+        const segments = splitTextByThinkTags(text)
+        for (const seg of segments) {
+          if (seg.type === 'thinking') {
+            result.push({
+              type: 'thinking',
+              thinking: seg.content,
+              signature: '',
+            })
+          } else {
+            result.push({ type: 'text', text: seg.content })
+          }
+        }
+        continue
+      }
+    }
+    result.push(block)
+  }
+  return result
+}

@@ -168,6 +168,7 @@ import {
 import { KLAUDE_IN_CHROME_MCP_SERVER_NAME } from 'src/utils/klaudeInChrome/common.js'
 import { CHROME_SEARCH_EXTRA_TOOLS_INSTRUCTIONS } from 'src/utils/klaudeInChrome/prompt.js'
 import { getMaxThinkingTokensForModel } from 'src/utils/context.js'
+import { splitThinkTagsInContentBlocks } from 'src/utils/displayTags.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logForDiagnosticsNoPII } from 'src/utils/diagLogs.js'
 import { type EffortValue, modelSupportsEffort } from 'src/utils/effort.js'
@@ -2300,12 +2301,17 @@ async function* queryModel(
               ;(contentBlock as { text: string }).text = deltas.join('')
               textDeltas.delete(part.index)
             }
+            // Split inline <think>/<thinking> tags emitted by some local LLM
+            // servers (llama.cpp with Qwen-Agentic / DeepSeek chat templates)
+            // into proper thinking + text blocks. Without this, chain-of-thought
+            // and raw </think> tags leak into user-visible text.
+            const blocksToYield = splitThinkTagsInContentBlocks([contentBlock])
             const m: AssistantMessage = {
               message: {
                 ...partialMessage,
                 usage: partialMessage.usage ?? { ...EMPTY_USAGE },
                 content: normalizeContentFromAPI(
-                  [contentBlock] as BetaContentBlock[],
+                  blocksToYield as BetaContentBlock[],
                   tools,
                   options.agentId,
                 ) as MessageContent,
@@ -2703,7 +2709,9 @@ async function* queryModel(
         message: {
           ...result,
           content: normalizeContentFromAPI(
-            result.content,
+            splitThinkTagsInContentBlocks(
+              result.content as unknown[],
+            ) as BetaContentBlock[],
             tools,
             options.agentId,
           ) as MessageContent,
@@ -2803,7 +2811,9 @@ async function* queryModel(
           message: {
             ...result,
             content: normalizeContentFromAPI(
-              result.content,
+              splitThinkTagsInContentBlocks(
+                result.content as unknown[],
+              ) as BetaContentBlock[],
               tools,
               options.agentId,
             ) as MessageContent,
