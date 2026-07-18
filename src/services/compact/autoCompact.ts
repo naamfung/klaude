@@ -70,14 +70,14 @@ const TOOL_RESULT_GROWTH_ESTIMATE = 15_000
 
 /**
  * Context-aware autocompact buffer. Dynamically calculates buffer based on
- * the model's effective context window size, using a 7% ratio to ensure
+ * the model's effective context window size, using a 10% ratio to ensure
  * proportional headroom for larger windows while protecting small windows
  * with a 10k minimum floor.
  */
 export function getAutocompactBufferTokens(model: string): number {
   const effectiveWindow = getEffectiveContextWindowSize(model)
-  // Dynamic buffer: 7% of effective window size
-  const dynamicBuffer = Math.floor(effectiveWindow * 0.07)
+  // Dynamic buffer: 10% of effective window size
+  const dynamicBuffer = Math.floor(effectiveWindow * 0.10)
   // Ensure minimum buffer to protect small context window models
   return Math.max(dynamicBuffer, 10_000)
 }
