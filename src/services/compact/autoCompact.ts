@@ -77,7 +77,7 @@ const TOOL_RESULT_GROWTH_ESTIMATE = 15_000
 export function getAutocompactBufferTokens(model: string): number {
   const effectiveWindow = getEffectiveContextWindowSize(model)
   // Dynamic buffer: 10% of effective window size
-  const dynamicBuffer = Math.floor(effectiveWindow * 0.10)
+  const dynamicBuffer = Math.floor(effectiveWindow * 0.1)
   // Ensure minimum buffer to protect small context window models
   return Math.max(dynamicBuffer, 10_000)
 }

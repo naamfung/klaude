@@ -40,14 +40,18 @@ export type OfficialMarketplaceSkipReason =
   | 'git_unavailable'
   | 'gcs_unavailable'
   | 'unknown'
+  | 'disabled_by_default'
 
 /**
- * Check if official marketplace auto-install is disabled via environment variable.
+ * Check if official marketplace auto-install is disabled.
+ * Disabled by default; set KLAUDE_CODE_ENABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1 to enable.
  */
 export function isOfficialMarketplaceAutoInstallDisabled(): boolean {
-  return isEnvTruthy(
-    process.env.KLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL,
+  // Enabled only if explicitly set via KLAUDE_CODE_ENABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL
+  const isEnabled = isEnvTruthy(
+    process.env.KLAUDE_CODE_ENABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL,
   )
+  return !isEnabled
 }
 
 /**
@@ -147,24 +151,15 @@ export type OfficialMarketplaceCheckResult = {
 export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMarketplaceCheckResult> {
   const config = getGlobalConfig()
 
-  // Check env var BEFORE retry logic — if user explicitly disabled auto-install,
-  // return policy_blocked immediately regardless of retry state
+  // Check if auto-install is enabled (disabled by default)
+  // Only proceed if KLAUDE_CODE_ENABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1 is set
   if (isOfficialMarketplaceAutoInstallDisabled()) {
     logForDebugging(
-      'Official marketplace auto-install disabled via env var, skipping',
+      'Official marketplace auto-install disabled by default, skipping',
     )
-    saveGlobalConfig(current => ({
-      ...current,
-      officialMarketplaceAutoInstallAttempted: true,
-      officialMarketplaceAutoInstalled: false,
-      officialMarketplaceAutoInstallFailReason: 'policy_blocked',
-    }))
-    logEvent('tengu_official_marketplace_auto_install', {
-      installed: false,
-      skipped: true,
-      policy_blocked: true,
-    })
-    return { installed: false, skipped: true, reason: 'policy_blocked' }
+    // Do not set attempted=true so that if the user enables it later via env var,
+    // it will be attempted on the next startup.
+    return { installed: false, skipped: true, reason: 'disabled_by_default' }
   }
 
   // Check if we should retry installation
