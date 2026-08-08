@@ -6,7 +6,7 @@ import { generateAwaySummary } from '../services/awaySummary.js'
 import type { Message } from '../types/message.js'
 import { createAwaySummaryMessage } from '../utils/messages.js'
 
-const BLUR_DELAY_MS = 5 * 60_000
+const BLUR_DELAY_MS = 60 * 60_000
 
 type SetMessages = (updater: (prev: Message[]) => Message[]) => void
 
@@ -21,7 +21,7 @@ function hasSummarySinceLastUserTurn(messages: readonly Message[]): boolean {
 
 /**
  * Appends a "while you were away" summary message after the terminal has been
- * blurred for 5 minutes. Fires only when (a) 5min since blur, (b) no turn in
+ * blurred for 60 minutes. Fires only when (a) 60min since blur, (b) no turn in
  * progress, and (c) no existing away_summary since the last user message.
  *
  * For terminals that don't support DECSET 1004 focus events (CMD, PowerShell),
