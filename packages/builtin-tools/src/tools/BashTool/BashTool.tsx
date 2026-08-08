@@ -150,6 +150,94 @@ const BASH_SILENT_COMMANDS = new Set([
 ]);
 
 /**
+ * 分離 cd 命令和後續命令，並生成重試命令列表以支持 Windows 路徑格式兼容性
+ */
+function splitAndRetryCdCommand(command: string): {
+  commands: string[];
+} {
+  // 檢查命令是否包含 cd 命令，並且不包含引號
+  // 如果有引號，不作處理
+  // 匹配 cd 後跟引號的情況：cd "path" 或 cd 'path'
+  if (/cd\s+["']/.test(command)) {
+    return { commands: [command] };
+  }
+
+  // 分離 cd 命令和後續命令
+  // 匹配: cd <path> && ... 或 cd <path> ; ... 或 cd <path> | ...
+  // 注意：path 不能包含空格、&、|、;，並且不能有引號
+  const cdMatch = command.match(/^cd\s+([^\s;&|"'\\]+)(.*)$/);
+  if (!cdMatch) {
+    return { commands: [command] };
+  }
+
+  const cdPath = cdMatch[1];
+  const remainingCommand = cdMatch[2] || '';
+
+  // 檢查路徑格式並生成重試命令
+  let cdCommands: string[] = [];
+
+  // 模式1: cd /盤符/路径/目录 (例如: cd /D/Agents/inx)
+  if (/^\/([A-Za-z])\/.+/.test(cdPath)) {
+    const driveMatch = cdPath.match(/^\/([A-Za-z])\/(.*)$/);
+    if (driveMatch) {
+      const drive = driveMatch[1].toUpperCase();
+      const path = driveMatch[2];
+      // 重試順序：原命令 -> cd 盘符:/路径/目录 -> cd 盘符:\路径\目录
+      cdCommands = [
+        `cd ${cdPath}`, // 原命令：cd /D/Agents/inx
+        `cd ${drive}:${path.replace(/\//g, '/')}`, // 重试1：cd D:/Agents/inx
+        `cd ${drive}\\${path.replace(/\//g, '\\')}`, // 重试2：cd D:\Agents\inx
+      ];
+    }
+  }
+  // 模式2: cd 盘符:\路径\目录 (例如: cd D:\Agents\klaude)
+  else if (/^([A-Za-z]):\\.+/.test(cdPath)) {
+    const driveMatch = cdPath.match(/^([A-Za-z]):\\(.*)$/);
+    if (driveMatch) {
+      const drive = driveMatch[1].toUpperCase();
+      const path = driveMatch[2];
+      // 重試順序：原命令 -> cd 盘符:/路径/目录 -> cd /盘符/路径/目录
+      cdCommands = [
+        `cd ${cdPath}`, // 原命令：cd D:\Agents\klaude
+        `cd ${drive}:/${path.replace(/\\/g, '/')}`, // 重试1：cd D:/Agents/klaude
+        `cd /${drive.toLowerCase()}/${path.replace(/\\/g, '/')}`, // 重试2：cd /d/agents/klaude
+      ];
+    }
+  }
+  // 模式3: cd 盘符:/路径/目录 (例如: cd D:/Agents/klaude)
+  else if (/^([A-Za-z]):\/.+/.test(cdPath)) {
+    const driveMatch = cdPath.match(/^([A-Za-z]):\/(.*)$/);
+    if (driveMatch) {
+      const drive = driveMatch[1].toUpperCase();
+      const path = driveMatch[2];
+      // 重試順序：原命令 -> cd /盘符/路径/目录 -> cd 盘符:\路径\目录
+      cdCommands = [
+        `cd ${cdPath}`, // 原命令：cd D:/Agents/klaude
+        `cd /${drive.toLowerCase()}/${path.replace(/\//g, '/')}`, // 重试1：cd /d/agents/klaude
+        `cd ${drive}\\${path.replace(/\//g, '\\')}`, // 重试2：cd D:\Agents\klaude
+      ];
+    }
+  } else {
+    // 其他格式，直接返回原命令
+    return { commands: [command] };
+  }
+
+  // 為每個 cd 命令追加後續命令
+  const fullCommands = cdCommands.map(cdCmd => {
+    // 提取 cd 路徑並與後續命令組合
+    // cdCmd 的格式是 "cd <path>"
+    const cdPathMatch = cdCmd.match(/^cd\s+([^\s;&|]+)$/);
+    if (!cdPathMatch) {
+      return cdCmd + remainingCommand;
+    }
+    const cdPath = cdPathMatch[1];
+    return `cd ${cdPath}${remainingCommand}`;
+  });
+
+  return { commands: fullCommands };
+}
+
+/**
  * Checks if a bash command is a search or read operation.
  * Used to determine if the command should be collapsed in the UI.
  * Returns an object indicating whether it's a search or read operation.
@@ -773,95 +861,133 @@ export const BashTool = buildTool({
 
     let progressCounter = 0;
     let wasInterrupted = false;
-    let result: ExecResult;
+    let result: ExecResult | null = null;
 
     const isMainThread = !toolUseContext.agentId;
     const preventCwdChanges = !isMainThread;
 
-    try {
-      // Use the new async generator version of runShellCommand
-      const commandGenerator = runShellCommand({
-        input,
-        abortController,
-        // Use the always-shared task channel so async agents' background
-        // bash tasks are actually registered (and killable on agent exit).
-        setAppState: toolUseContext.setAppStateForTasks ?? setAppState,
-        setToolJSX,
-        preventCwdChanges,
-        isMainThread,
-        toolUseId: toolUseContext.toolUseId,
-        agentId: toolUseContext.agentId,
-      });
+    // 獲取重試命令列表
+    const { commands: retryCommands } = splitAndRetryCdCommand(input.command);
 
-      // Consume the generator and capture the return value
-      let generatorResult;
-      do {
-        generatorResult = await commandGenerator.next();
-        if (!generatorResult.done && onProgress) {
-          const progress = generatorResult.value;
-          onProgress({
-            toolUseID: `bash-progress-${progressCounter++}`,
-            data: {
-              type: 'bash_progress',
-              output: progress.output,
-              fullOutput: progress.fullOutput,
-              elapsedTimeSeconds: progress.elapsedTimeSeconds,
-              totalLines: progress.totalLines,
-              totalBytes: progress.totalBytes,
-              taskId: progress.taskId,
-              timeoutMs: progress.timeoutMs,
-            },
-          });
+    // 循環執行命令，直到成功或所有重試都失敗
+    let firstResult: ExecResult | null = null;
+    let isFirstAttempt = true;
+
+    for (const cmd of retryCommands) {
+      try {
+        // Use the new async generator version of runShellCommand
+        const commandGenerator = runShellCommand({
+          input: { ...input, command: cmd },
+          abortController,
+          // Use the always-shared task channel so async agents' background
+          // bash tasks are actually registered (and killable on agent exit).
+          setAppState: toolUseContext.setAppStateForTasks ?? setAppState,
+          setToolJSX,
+          preventCwdChanges,
+          isMainThread,
+          toolUseId: toolUseContext.toolUseId,
+          agentId: toolUseContext.agentId,
+        });
+
+        // Consume the generator and capture the return value
+        let generatorResult;
+        do {
+          generatorResult = await commandGenerator.next();
+          if (!generatorResult.done && onProgress) {
+            const progress = generatorResult.value;
+            onProgress({
+              toolUseID: `bash-progress-${progressCounter++}`,
+              data: {
+                type: 'bash_progress',
+                output: progress.output,
+                fullOutput: progress.fullOutput,
+                elapsedTimeSeconds: progress.elapsedTimeSeconds,
+                totalLines: progress.totalLines,
+                totalBytes: progress.totalBytes,
+                taskId: progress.taskId,
+                timeoutMs: progress.timeoutMs,
+              },
+            });
+          }
+        } while (!generatorResult.done);
+
+        // Get the final result from the generator's return value
+        result = generatorResult.value;
+
+        // 如果命令成功執行（退出碼為 0），則返回結果
+        if (result.code === 0) {
+          trackGitOperations(cmd, result.code, result.stdout);
+
+          const isInterrupt = result.interrupted && abortController.signal.reason === 'interrupt';
+
+          // stderr is interleaved in stdout (merged fd) — result.stdout has both
+          stdoutAccumulator.append((result.stdout || '').trimEnd() + EOL);
+
+          // Interpret the command result using semantic rules
+          interpretationResult = interpretCommandResult(cmd, result.code, result.stdout || '', '');
+
+          // Check for git index.lock error (stderr is in stdout now)
+          if (result.stdout && result.stdout.includes(".git/index.lock': File exists")) {
+            logEvent('tengu_git_index_lock_error', {});
+          }
+
+          if (!preventCwdChanges) {
+            const appState = getAppState();
+            if (resetCwdIfOutsideProject(appState.toolPermissionContext)) {
+              stderrForShellReset = stdErrAppendShellResetMessage('');
+            }
+          }
+
+          // Annotate output with sandbox violations if any (stderr is in stdout)
+          const outputWithSbFailures = SandboxManager.annotateStderrWithSandboxFailures(cmd, result.stdout || '');
+
+          if (result.preSpawnError) {
+            throw new Error(result.preSpawnError);
+          }
+          if (interpretationResult?.isError && !isInterrupt) {
+            // stderr is merged into stdout (merged fd); outputWithSbFailures
+            // already has the full output. Pass '' for stdout to avoid
+            // duplication in getErrorParts() and processBashCommand.
+            throw new ShellError('', outputWithSbFailures, result.code, result.interrupted);
+          }
+          wasInterrupted = result.interrupted;
+          break; // 成功執行，退出循環
+        } else {
+          // 命令失敗，如果是第一次失敗，保存結果以便最後報錯
+          if (isFirstAttempt) {
+            firstResult = result;
+            isFirstAttempt = false;
+          }
         }
-      } while (!generatorResult.done);
-
-      // Get the final result from the generator's return value
-      result = generatorResult.value;
-
-      trackGitOperations(input.command, result.code, result.stdout);
-
-      const isInterrupt = result.interrupted && abortController.signal.reason === 'interrupt';
-
-      // stderr is interleaved in stdout (merged fd) — result.stdout has both
-      stdoutAccumulator.append((result.stdout || '').trimEnd() + EOL);
-
-      // Interpret the command result using semantic rules
-      interpretationResult = interpretCommandResult(input.command, result.code, result.stdout || '', '');
-
-      // Check for git index.lock error (stderr is in stdout now)
-      if (result.stdout && result.stdout.includes(".git/index.lock': File exists")) {
-        logEvent('tengu_git_index_lock_error', {});
-      }
-
-      if (interpretationResult.isError && !isInterrupt) {
-        // Only add exit code if it's actually an error
-        if (result.code !== 0) {
-          stdoutAccumulator.append(`Exit code ${result.code}`);
+      } catch (error) {
+        // 捕獲異常，如果是第一次失敗，保存結果以便最後報錯
+        if (isFirstAttempt) {
+          firstResult = {
+            code: 1,
+            interrupted: false,
+            stdout: '',
+            stderr: error instanceof Error ? error.message : String(error),
+          } as ExecResult;
+          isFirstAttempt = false;
         }
+      } finally {
+        if (setToolJSX) setToolJSX(null);
       }
+    }
 
-      if (!preventCwdChanges) {
-        const appState = getAppState();
-        if (resetCwdIfOutsideProject(appState.toolPermissionContext)) {
-          stderrForShellReset = stdErrAppendShellResetMessage('');
-        }
-      }
+    // 如果所有重試都失敗，使用第一次嘗試失敗的結果
+    if (firstResult && firstResult.code !== 0) {
+      result = firstResult;
+    }
 
-      // Annotate output with sandbox violations if any (stderr is in stdout)
-      const outputWithSbFailures = SandboxManager.annotateStderrWithSandboxFailures(input.command, result.stdout || '');
-
-      if (result.preSpawnError) {
-        throw new Error(result.preSpawnError);
-      }
-      if (interpretationResult.isError && !isInterrupt) {
-        // stderr is merged into stdout (merged fd); outputWithSbFailures
-        // already has the full output. Pass '' for stdout to avoid
-        // duplication in getErrorParts() and processBashCommand.
-        throw new ShellError('', outputWithSbFailures, result.code, result.interrupted);
-      }
-      wasInterrupted = result.interrupted;
-    } finally {
-      if (setToolJSX) setToolJSX(null);
+    // 確保 result 存在
+    if (!result) {
+      result = {
+        code: 1,
+        stdout: '',
+        stderr: '',
+        interrupted: false,
+      } as ExecResult;
     }
 
     // Get final string from accumulator
